@@ -1,0 +1,175 @@
+---
+title: "XAI 3: Model-Agnostic methods"
+author: "Marcos Carbonell Mafé", "Borja Esteve Molner", "Guillermo Ferrando Muñoz"
+output: html_notebook
+---
+
+## EXERCISE:
+
+Apply PDP to the regression example of predicting bike rentals. Fit a random forest approximation for the prediction of bike rentals (**cnt**). Use the partial dependence plot to visualize the relationships the model learned. Use the slides shown in class as model.  
+
+## QUESTION:
+
+Analyse the influence of **days since 2011, temperature, humidity** and **wind speed** on the predicted bike counts.
+
+
+```{r}
+library(dplyr)
+library(plotly)
+library(reshape2)
+library(lubridate)
+library(randomForestSRC)
+
+#setwd("/Users/cmonserr/OneDrive - UPV/Trabajo_2/Asignaturas/Evaluacion de modelos/Practicas/Practica 3/Bike-Sharing-Dataset")
+days <- read.csv("day.csv")
+hour <- read.csv("hour.csv")
+
+days$dteday <- as_date(days$dteday)
+days_since <- select(days, workingday, holiday, temp, hum, windspeed, cnt)
+#days_since <- days[, c("workingday", "holiday", "temp", "hum","windspeed", "cnt")]
+days_since$days_since_2011 <- int_length(interval(ymd("2011-01-01"), days$dteday)) / (3600*24)
+days_since$SUMMER <- ifelse(days$season == 3, 1, 0)
+days_since$FALL <- ifelse(days$season == 4, 1, 0)
+days_since$WINTER <- ifelse(days$season == 1, 1, 0)
+days_since$MISTY <- ifelse(days$weathersit == 2, 1, 0)
+days_since$RAIN <- ifelse(days$weathersit == 3 | days$weathersit == 4, 1, 0)
+days_since$temp <- days_since$temp * 47 - 8
+days_since$hum <- days_since$hum * 100
+days_since$windspeed <- days_since$windspeed * 67
+
+rf <- rfsrc(cnt~., data=days_since)
+
+#results <- select(days_since, days_since_2011, temp, hum, windspeed, cnt)
+results <- days_since[, c("days_since_2011", "temp", "hum", "windspeed", "cnt")]
+nr <- nrow(days_since)
+for(c in names(results)[1:4])
+{
+  for(i in 1:nr){
+    r <- days_since
+    r[[c]] <- days_since[[c]][i]
+    sal <- predict(rf, r)$predicted
+    results[[c]][i] <- sum(sal) / nr
+  }
+}
+
+#ggplot(days_since, aes(x=days_since_2011, y=results$days_since_2011))
+
+g1 <- ggplot(days_since, aes(x=days_since_2011, y=results$days_since_2011)) + geom_line() +ylim(c(0,6000))+ geom_rug(alpha = 0.1, sides = "b") + xlab("Days since 2011") + ylab("Prediction")
+
+g2 <- ggplot(days_since, aes(x=temp, y=results$temp)) + geom_line() +ylim(c(0,6000))+ geom_rug(alpha = 0.1, sides = "b")+ xlab("Temperature")
+
+g3 <- ggplot(days_since, aes(x=hum, y=results$hum)) + geom_line() +ylim(c(0,6000))+ geom_rug(alpha = 0.1, sides = "b")+ xlab("Humidity")
+
+g4 <- ggplot(days_since, aes(x=windspeed, y=results$windspeed)) + geom_line() +ylim(c(0,6000))+ geom_rug(alpha = 0.1, sides = "b")+ xlab("Wind speed")
+
+subplot(g1,g2,g3,g4, shareY = TRUE, shareX = FALSE, titleX = TRUE)
+```
+
+**Days since 2011:** Al tratarse de una variable de fechas no repetidas, no tendría sentido mostrar una distribución en el eje x, de ahí que se vea como una barra gris homogénea. Teniendo esto en cuenta, el gráfico nos sirve más bien como un histograma, del que podemos deducir que a partir de 2012, el número de bicis alquiladas al día aumentó rondando el doble respecto al año anterior.
+
+
+**Temperature:** Podemos observar que la distribución es bastante uniforme entre las temperaturas 5 y 29 (más o menos), por lo que las predicciones en este intervalo deberían ser fiables. El número de bicicletas alquiladas aumenta con fuerza a partir de los 5 grados y comienza a estabilizarse sobre los 16, subiendo al máximo en los 23 grados. Todo esto tiene bastante lógica; con temperaturas fuera del intervalo mencionado, usar una bicicleta puede ser sofocante o helador. Además, las predicciones parecen tener correlación con las del anterior gráfico, donde se veía que, (mirando por encima) con el comienzo de febrero, los alquileres crecen.
+
+
+**Humidity:** Según los mostrado en el intervalo de humedad entre 40 y 75, los alquileres disminuyen a medida que la humedad aumenta. La predicción de lo que ocurriría entre humedad nula y humedad de 35 es posiblemente imprecisa, ya que apenas tenemos información real de esos casos.
+
+
+**Wind speed:** Este gráfico nos indica que es preferible menor velocidad de viento para alquilar bicicletas, por lógica, diríamos que esto ocurre porque el viento desestabiliza a los ciclistas y por tanto aumenta el peligro de caída. Es razonable, pero no vendría mal hacer un contraste con alguna otra variable, por ejemplo la temperatura, ya que más viento puede significar que haya una temperatura menor y un aumento en el número de bicicletas alquiladas. 
+
+
+
+## EXERCISE:
+
+Generate a 2D Partial Dependency Plot with humidity and temperature to predict the number of bikes rented depending of those parameters.
+
+BE CAREFUL: due to the size, extract a set of random samples from the BBDD before generating the the data for the Partial Dependency Plot. 
+
+Show the density distribution of both input features with the 2D plot as shown in the class slides. 
+
+TIP: Use geom_tile() to generate the 2D plot. Set width and height to avoid holes. 
+
+## QUESTION:
+
+Interpret the results.
+
+
+```{r}
+
+sampled <- sample_n(days_since, 40)
+temp <- sampled$temp
+hum <- sampled$hum
+th <- inner_join(data.frame(temp),data.frame(hum), by=character())
+th$p <- 0
+
+for(i in 1:nrow(th)){
+  r <- days_since
+  r[["temp"]] <- th[["temp"]][i]
+  r[["hum"]] <- th[["hum"]][i]
+  
+  sal <- predict(rf, r)$predicted
+  th[["p"]][i] <- sum(sal) / nr
+}
+
+ggplot(th, aes(x=temp, y=hum)) + geom_tile(aes(fill = p, width = 10, height = 15)) + geom_rug(alpha = 0.01) + xlab("Temperature") + ylab("Humidity") + scale_fill_gradient(name = "Number of bikes")
+
+```
+**Conclusiones PDP 2D**
+
+Del siguiente gráfico podemos observar algunos efectos con bastante lógica:
+
+Primero, observando la variable temperatura por separado (es decir, sin su interacción con la humedad), vemos que las temperaturas bajas afectan notablemente al alquiler de bicicletas, disminuyendo notablemente este.Esto puede observarse viendo los colores correspondientes a las temperaturas entre -10 y 8. Vemos que en ese rango, el color del área que cubre ese trozo de gráfico es mucho más azul que el resto. Aunque si que es verdad que no hay muchas observaciones entorno a estas temperaturas, tiene lógica que en ese rango de temperaturas se vendan menos bicicletas.
+
+Observando la humedad por separado, observamos que humedades altas también contribuyen a un menor alquiler de bicicletas, lo cual también casa con el sentido común. Esto puede observarse observando que los colores correspondientes a las humedades entre 80 y 100 son más oscuros. Como antes, se observan menos observaciones en estos rangos de humedad, pero aun así, las conclusiones parecen lógicas.
+
+Posiblemente, una de las causas por las que se observan menos observaciones en estos dos rangos (mucho frío o mucha humedad) es precisamente por que dados estos fenñomenos metereológicos el alqiuiiler de bicis desciende bruscamente.
+
+Observando las dos variables conjuntamente, observamos que la intersección entre los dos rangos comentados con anterioridad es la zona más azul, donde se bate el record de menos bicicletas vendidas. Por el contrario, se observa que para temperaturas mayores de 8 grados (aproximadamente) y humedades menores de 80. el alquiler de bicis aumenta drásticamente, siendo máximo en una temperatura entre 20 y 30 grados y una humedad entre 58 y 20 (puede observarse que es la zona donde más individuos hay lo cual encaja con la conclusión a la que hemos llegado).
+
+
+## EXERCISE:
+
+Apply the previous concepts to predict the **price** of a house from the database **kc_house_data.csv**. In this case, use again a random forest approximation for the prediction based on the features **bedrooms**, **bathrooms**, **sqft_living**, **sqft_lot**, **floors** and **yr_built**. 
+Use the partial dependence plot to visualize the relationships the model learned.
+
+BE CAREFUL: due to the size, extract a set of random samples from the BBDD before generating the data for the Partial Dependency Plot. 
+
+## QUESTION:
+
+Analyse the influence of **bedrooms, bathrooms, sqft_living** and **floors** on the predicted price.
+
+```{r}
+library(randomForest)
+d <- read.csv("kc_house_data.csv")
+sampled <- sample_n(d, 1000)
+sampled <- select(sampled, bedrooms, bathrooms, sqft_living, sqft_lot, floors, yr_built, price)
+rf <- randomForest(price~., data=sampled)
+results <- select(sampled, bedrooms, bathrooms, sqft_living, floors, price)
+nr <- nrow(sampled)
+for(c in names(results)[1:4])
+{
+for(i in 1:nr){
+r <- sampled
+r[[c]] <- sampled[[c]][i]
+sal <- predict(rf, r)
+results[[c]][i] <- sum(sal) / nr
+}
+}
+p1 <- ggplot(sampled, aes(x=bedrooms, y=results$bedrooms)) + geom_line() + geom_rug(alpha = 0.1, sides = "b") + ylab("Prediction") + xlab("Bedrooms")
+p2 <- ggplot(sampled, aes(x=bathrooms, y=results$bathrooms)) + geom_line() + geom_rug(alpha = 0.1, sides = "b")+ xlab("Bathrooms")
+p3 <- ggplot(sampled, aes(x=sqft_living, y=results$sqft_living)) + geom_line() + geom_rug(alpha = 0.1, sides = "b")+ xlab("Sqft Living")
+p4 <- ggplot(sampled, aes(x=floors, y=results$floors)) + geom_line() + geom_rug(alpha = 0.1, sides = "b")+ xlab("Floors")
+subplot(p1,p2,p3,p4, shareX = FALSE, titleX = TRUE)
+```
+***Bedrooms:*** En esta variable existe un problema importante que afecta a la forma del plot, que es el número de casos disponibles para cada número. Podemos ver que hay muchos o bastantes valores entre las 0 y 10 habitaciones, pero luego se despunta hacia más de 30 y los valores se vuelven imprecisos. En cuanto a la interpretación, parece darse el caso de que a más habitaciones más barata es la casa, o menor es el precio predicho, aunque al observar los valores vemos que las variaciones nunca salen de los intervalos de los 500.000. Esto parece que no tiene sentido lógico, pero al ver los valores entre los que oscila el precio se puede llegar a ignorar. En el caso de las más de 30 habitaciones el precio crece ligeramente, pero no alcanza el del número previo de precios.
+
+
+
+***Bathrooms:*** En bathrooms si que tenemos más casos distribuidos para todos los valores, centrados sobretodo en los valores medios. A la hora de interpretar, parece bastante sensato asumir que el precio aumenta proporcionalmente al número de baños, con algunos tramos sin mucha subida pero sin romper del todo el patrón. En comparación a la anterior variable vemos que las escalas de precio son bastante más variadas y distantes entre extremos, lo cual nos lleva a pensar que se el número de baños afecta más gravemente a los valores de precio que el número de habitaciones.
+
+
+
+***Sqft Living:*** En esta variable vemos la relación proporcional que observábamos antes pero de forma más clara y uniforme. Es posible que el hecho de que la variable tenga muchas más opciones de valores y unos casos muy bien distribuidos ayude a esta observación. Hay dos comentarios que se pueden realizar interpretando esta gráfica, el primero siendo que la distribución de casos empieza a decrecer al aumentar el valor de la variable, por lo que la interpretación puede no ser del todo correcta. El segundo comentario es que las escalas de precio a las que aumenta son aún mayores que en los anteriores, por lo que se puede interpretar que la variable Sqft Living tiene una influencia muy potente sobre el precio final predicho.
+
+
+
+***Floors:*** Finalmente, en el caso de Floors encontramos una gráfica con propiedades similares a las de la primera variable bedrooms, pero con un plot distinto. De nuevo encontramos que todos los casos están bien distribuidos entre los posibles valores registrados de pisos, y que las escalas de valores no se alejan demasiado del rango de los 500.000, por lo que tampoco influye excesivamente al precio. La línea representada nos dice que se repite la relación proporcional de la variable con el precio, siendo que a más pisos más aumenta el precio del hogar.
